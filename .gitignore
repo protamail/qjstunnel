@@ -1,0 +1,4 @@
+/.obj
+/*.jar
+*.so
+!/libqjs.so
