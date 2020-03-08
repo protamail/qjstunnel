@@ -1,9 +1,6 @@
 OBJDIR=.obj
 CLSDIR=$(OBJDIR)/classes
 
-JC=javac
-JC_FLAGS=-d $(CLSDIR) -g -h .
-
 HOST_CC=gcc
 CC=gcc
 CFLAGS=-g -O2 -flto -Wall -MMD -MF $(OBJDIR)/$(@F).d -I/usr/lib/jvm/java/include -I/usr/lib/jvm/java/include/linux
@@ -19,7 +16,7 @@ JSRC=*.java
 
 all: $(PROGS)
 
-LIB_OBJS=$(OBJDIR)/test.o
+LIB_OBJS=$(OBJDIR)/QJSTunnel.o
 
 LIBS=-lm -ldl libqjs.so
 
@@ -34,7 +31,7 @@ $(SHLIB): $(OBJDIR) $(LIB_OBJS)
 	$(STRIP) $@
 
 $(JAR): $(CLSDIR) $(JSRC)
-	$(JC) $(JC_FLAGS) $(JSRC)
+	javac -d $(CLSDIR) -g -h . $(JSRC)
 	jar -cf $(JAR) -C $(CLSDIR) .
 
 $(OBJDIR)/%.o: %.c | $(OBJDIR)

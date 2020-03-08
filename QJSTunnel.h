@@ -25,19 +25,11 @@ JNIEXPORT jint JNICALL Java_QJSTunnel_exec_1cmd
 
 /*
  * Class:     QJSTunnel
- * Method:    sayHello
- * Signature: ()V
- */
-JNIEXPORT void JNICALL Java_QJSTunnel_sayHello
-  (JNIEnv *, jobject);
-
-/*
- * Class:     QJSTunnel
  * Method:    newQJSRuntime
- * Signature: (Ljava/lang/String;)[B
+ * Signature: (Ljava/lang/String;Ljava/lang/String;)[B
  */
 JNIEXPORT jbyteArray JNICALL Java_QJSTunnel_newQJSRuntime
-  (JNIEnv *, jobject, jstring);
+  (JNIEnv *, jobject, jstring, jstring);
 
 /*
  * Class:     QJSTunnel
@@ -46,6 +38,14 @@ JNIEXPORT jbyteArray JNICALL Java_QJSTunnel_newQJSRuntime
  */
 JNIEXPORT void JNICALL Java_QJSTunnel_freeQJSRuntime
   (JNIEnv *, jobject, jbyteArray);
+
+/*
+ * Class:     QJSTunnel
+ * Method:    callQJS
+ * Signature: ([B[Ljava/lang/String;)I
+ */
+JNIEXPORT jint JNICALL Java_QJSTunnel_callQJS
+  (JNIEnv *, jobject, jbyteArray, jobjectArray);
 
 #ifdef __cplusplus
 }

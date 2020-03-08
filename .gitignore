@@ -1,4 +1,4 @@
 /.obj
-/*.jar
+*.jar
 *.so
 !/libqjs.so
