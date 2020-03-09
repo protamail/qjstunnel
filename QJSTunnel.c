@@ -6,6 +6,16 @@
 #include "quickjs-libc.h"
 #include <string.h>
 
+#if defined(__GNUC__) || defined(__clang__)
+#define likely(x)          __builtin_expect(!!(x), 1)
+#define unlikely(x)        __builtin_expect(!!(x), 0)
+#define force_inline       inline __attribute__((always_inline))
+#else
+#define likely(x)     (x)
+#define unlikely(x)   (x)
+#define force_inline  inline
+#endif
+
 static int eval_buf(JSContext *ctx, const void *buf, int buf_len,
                     const char *filename, int eval_flags);
 static int eval_module(JSContext *ctx, const char *filename);
@@ -26,12 +36,12 @@ JNIEXPORT jbyteArray JNICALL Java_QJSTunnel_newQJSRuntime(JNIEnv *env,
     JSRuntime *rt = JS_NewRuntime();
     JSContext *ctx;
     jbyteArray ret = NULL;
-    if (!rt) {
+    if (unlikely(!rt)) {
         printf("Error: cannot allocate JS runtime\n");
         goto release_runtime;
     }
     ctx = JS_NewContext(rt); // includes intrinsic objects init
-    if (!ctx) {
+    if (unlikely(!ctx)) {
         printf("Error: cannot allocate JS context\n");
         goto release_runtime;
     }
@@ -56,7 +66,7 @@ JNIEXPORT jbyteArray JNICALL Java_QJSTunnel_newQJSRuntime(JNIEnv *env,
     const char *_main_func = (*env)->GetStringUTFChars(env, mainFunc, NULL);
     eval_module(ctx, _filename);
     JSValue main_func = JS_GetPropertyStr(ctx, global_obj, _main_func);
-    if (!JS_IsFunction(ctx, main_func)) {
+    if (unlikely(!JS_IsFunction(ctx, main_func))) {
         printf("newQJSRuntime: globalThis.%s function undefined\n", _main_func);
         JS_FreeValue(ctx, main_func);
         goto fail;
@@ -69,7 +79,7 @@ fail:
     (*env)->ReleaseStringUTFChars(env, mainFunc, _main_func);
     (*env)->ReleaseStringUTFChars(env, filename, _filename);
     JS_FreeValue(ctx, global_obj);
-    if (ret)
+    if (likely(ret))
         return ret;
 release_runtime:
     if (ctx)
@@ -83,7 +93,7 @@ release_runtime:
 JNIEXPORT void JNICALL Java_QJSTunnel_freeQJSRuntime(
         JNIEnv *env, jobject thisObject, jbyteArray jctx)
 {
-    if (!(*env)->GetArrayLength(env, jctx))
+    if (unlikely(!(*env)->GetArrayLength(env, jctx)))
         return;
     QJSHandle *qjs = (QJSHandle *)(*env)->GetByteArrayElements(env, jctx, NULL);
     JSRuntime *rt = JS_GetRuntime(qjs->ctx);
@@ -94,7 +104,7 @@ JNIEXPORT void JNICALL Java_QJSTunnel_freeQJSRuntime(
     printf("qjs: released QJS runtime\n");
 }
 
-static inline JSValue newJSString(JSContext *ctx, JNIEnv *env, jstring jarg)
+static force_inline JSValue newJSString(JSContext *ctx, JNIEnv *env, jstring jarg)
 {
     char *carg = (char *)(*env)->GetStringUTFChars(env, jarg, NULL);
     JSValue val = JS_NewStringLen(ctx, carg, (*env)->GetStringUTFLength(env, jarg));
@@ -118,10 +128,40 @@ typedef struct JavaHandle {
     jclass objectArrayClass;
 } JavaHandle;
 
-JNIEXPORT jint JNICALL Java_QJSTunnel_callQJS(
-        JNIEnv *env, jobject thisObject, jbyteArray jctx, jobjectArray stringArray)
+static JSValue newJSArray(JSContext *ctx, JNIEnv *env, JavaHandle *javaCtx, jobjectArray jarr, int *depth)
 {
-    if (!(*env)->GetArrayLength(env, jctx))
+    int len = jarr? (*env)->GetArrayLength(env, jarr) : 0;
+    JSValue ret = JS_NewArray(ctx);
+    for (int i = 0; i < len; i++) {
+        jobject jobj = (*env)->GetObjectArrayElement(env, jarr, i);
+        if (likely((*env)->IsInstanceOf(env, jobj, javaCtx->stringClass))) {
+            JS_SetPropertyUint32(ctx, ret, i, newJSString(ctx, env, (jstring)jobj));
+        }
+        else if ((*env)->IsInstanceOf(env, jobj, javaCtx->numberClass)) {
+            jdouble jdbl = (*env)->CallDoubleMethod(env, jobj, javaCtx->numberDoubleValue);
+            JS_SetPropertyUint32(ctx, ret, i, JS_NewFloat64(ctx, jdbl));
+        }
+        else if ((*env)->IsInstanceOf(env, jobj, javaCtx->objectArrayClass)) {
+            if (unlikely(*depth > 100))
+                printf("newJSArray: too many nested arrays, circular ref?\n");
+            else {
+                ++*depth;
+                JS_SetPropertyUint32(ctx, ret, i, newJSArray(ctx, env, javaCtx, (jobjectArray)jobj, depth));
+            }
+            --*depth;
+        }
+        else {
+            jobject jstr = (*env)->CallObjectMethod(env, jobj, javaCtx->objectToString);
+            JS_SetPropertyUint32(ctx, ret, i, newJSString(ctx, env, (jstring)jstr));
+        }
+    }
+    return ret;
+}
+
+JNIEXPORT jint JNICALL Java_QJSTunnel_callQJS(
+        JNIEnv *env, jobject thisObject, jbyteArray jctx, jobjectArray jarr)
+{
+    if (unlikely(!(*env)->GetArrayLength(env, jctx)))
         return -1;
     QJSHandle *qjs = (QJSHandle *)(*env)->GetByteArrayElements(env, jctx, NULL);
     JSContext *ctx = qjs->ctx;
@@ -139,18 +179,22 @@ JNIEXPORT jint JNICALL Java_QJSTunnel_callQJS(
     jclass stringClass = (*env)->FindClass(env, "java/lang/String");
     jclass objectArrayClass = (*env)->FindClass(env, "[Ljava/lang/Object;");
     JavaHandle javaCtx = { env, thisObject, callJava, objectClass, objectToString, integerClass, integerConstr,
-                           doubleClass, doubleConstr, numberClass, numberDoubleValue, stringClass, objectArrayClass };
+                           doubleClass, doubleConstr, numberClass, numberDoubleValue, stringClass,
+                           objectArrayClass };
 
     JS_SetContextOpaque(ctx, &javaCtx);
     JSValue global_obj = JS_GetGlobalObject(ctx);
-    int argc = (*env)->GetArrayLength(env, stringArray);
+
+    int depth = 0;
+    int argc = (*env)->GetArrayLength(env, jarr);
+    JSValue jsa = newJSArray(ctx, env, &javaCtx, jarr, &depth);
     JSValue *argv = (JSValue *)(js_malloc(ctx, argc * sizeof(JSValue)));
-    for (int i = 0; i < argc; i++) {
-        jstring jarg = (*env)->GetObjectArrayElement(env, stringArray, i);
-        argv[i] = newJSString(ctx, env, jarg);
-    }
+    if (!argv)
+        return -1;
+    for (int i = 0; i < argc; i++)
+        argv[i] = JS_GetPropertyUint32(ctx, jsa, i);
     JSValue result = JS_Call(ctx, qjs->main_func, global_obj, argc, argv);
-    if (JS_IsException(result)) {
+    if (unlikely(JS_IsException(result))) {
         ret = -1;
         js_std_dump_error(ctx);
         goto finalize;
@@ -160,6 +204,7 @@ finalize:
     for (int i = 0; i < argc; i++) {
         JS_FreeValue(ctx, argv[i]);
     }
+    JS_FreeValue(ctx, jsa);
     js_free(ctx, argv);
     JS_FreeValue(ctx, global_obj);
     JS_FreeValue(ctx, result);
@@ -168,48 +213,23 @@ finalize:
     return ret;
 }
 
-static JSValue newJSArray(JSContext *ctx, JNIEnv *env, JavaHandle *javaCtx, jobjectArray jarr, int *depth)
-{
-    int len = jarr? (*env)->GetArrayLength(env, jarr) : 0;
-    JSValue ret = JS_NewArray(ctx);
-    for (int i = 0; i < len; i++) {
-        jobject jobj = (*env)->GetObjectArrayElement(env, jarr, i);
-        if ((*env)->IsInstanceOf(env, jobj, javaCtx->objectArrayClass)) {
-            if (*depth > 100)
-                printf("newJSArray: too many nested arrays, circular ref?\n");
-            else {
-                ++*depth;
-                JS_SetPropertyUint32(ctx, ret, i, newJSArray(ctx, env, javaCtx, (jobjectArray)jobj, depth));
-            }
-            --*depth;
-        }
-        else if ((*env)->IsInstanceOf(env, jobj, javaCtx->numberClass)) {
-            jdouble jdbl = (*env)->CallDoubleMethod(env, jobj, javaCtx->numberDoubleValue);
-            JS_SetPropertyUint32(ctx, ret, i, JS_NewFloat64(ctx, jdbl));
-        }
-        else {
-            jobject jstr = (*env)->IsInstanceOf(env, jobj, javaCtx->stringClass)? jobj :
-                    (*env)->CallObjectMethod(env, jobj, javaCtx->objectToString);
-            JS_SetPropertyUint32(ctx, ret, i, newJSString(ctx, env, (jstring)jstr));
-        }
-    }
-    return ret;
-}
-
-static jobjectArray newJavaObjectArray(JSContext *ctx, JNIEnv *env, JavaHandle *javaCtx, int argc, JSValueConst *argv, int *depth)
+static jobjectArray newJavaObjectArray(JSContext *ctx, JNIEnv *env, JavaHandle *javaCtx,
+        int argc, JSValueConst *argv, int *depth)
 {
     jobjectArray ret = (*env)->NewObjectArray(env, argc, javaCtx->objectClass, NULL);
     for (int i = 0; i < argc; i++) {
         JSValueConst val = argv[i];
-        if (JS_IsArray(ctx, val)) {
+        if (unlikely(JS_IsArray(ctx, val))) {
             int len = 0;
             JSValue jslen = JS_GetPropertyStr(ctx, val, "length");
             JS_ToInt32(ctx, &len, jslen);
             JS_FreeValue(ctx, jslen);
             JSValue *jsa = (JSValue *)(js_malloc(ctx, len * sizeof(JSValue)));
+            if (!jsa)
+                return NULL;
             for (int j = 0; j < len; j++)
                 jsa[j] = JS_GetPropertyUint32(ctx, val, j);
-            if (*depth > 100)
+            if (unlikely(*depth > 100))
                 printf("newJavaObjectArray: too many nested arrays, circular ref?\n");
             else {
                 ++*depth;
@@ -240,7 +260,7 @@ static jobjectArray newJavaObjectArray(JSContext *ctx, JNIEnv *env, JavaHandle *
                     break;
                 default:
                     str = JS_ToCString(ctx, val);
-                    if (!str)
+                    if (unlikely(!str))
                         str = "";
                     (*env)->SetObjectArrayElement(env, ret, i, (*env)->NewStringUTF(env, str));
                     JS_FreeCString(ctx, str);

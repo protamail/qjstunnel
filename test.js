@@ -6,7 +6,7 @@ globalThis.std = std;
 globalThis.os = os;
 
 globalThis.handleRequest = function(method, path, ...searchNameValue) {
-    let a = callJava("eee","q","Саша", [3, 3.1415, "heh", ["r",2.3], true], false);
+    let a = callJava("eee","q","Саша", 3, 3.1415, "heh", "r",2.3, true, false);
     for (let s of a)
         console.log(s);
 }

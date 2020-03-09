@@ -8,7 +8,7 @@ CFLAGS += -Wno-array-bounds -Wno-format-truncation
 AR=gcc-ar
 STRIP=strip
 LDFLAGS=-g
-SHLIB=libtest.so
+SHLIB=libqjstun.so
 JAR=QJSTunnel.jar
 
 PROGS=$(JAR) $(SHLIB)
@@ -41,4 +41,4 @@ clean:
 	rm -rf $(OBJDIR)/ $(PROGS)
 
 test: all
-	java -cp $(JAR) -Djava.library.path=. QJSTunnel
+	java -cp $(JAR) -Djava.library.path=. QJSTest
