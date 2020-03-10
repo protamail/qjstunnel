@@ -1,5 +1,6 @@
 public abstract class QJSTunnel {
     static {
+        System.loadLibrary("qjs");
         System.loadLibrary("qjstun");
     }
 

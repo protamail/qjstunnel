@@ -9,27 +9,19 @@ extern "C" {
 #endif
 /*
  * Class:     QJSTunnel
- * Method:    main
- * Signature: (I[C)I
- */
-JNIEXPORT jint JNICALL Java_QJSTunnel_main
-  (JNIEnv *, jobject, jint, jcharArray);
-
-/*
- * Class:     QJSTunnel
- * Method:    exec_cmd
- * Signature: ([Ljava/lang/String;)I
- */
-JNIEXPORT jint JNICALL Java_QJSTunnel_exec_1cmd
-  (JNIEnv *, jobject, jobjectArray);
-
-/*
- * Class:     QJSTunnel
  * Method:    newQJSRuntime
  * Signature: (Ljava/lang/String;Ljava/lang/String;)[B
  */
 JNIEXPORT jbyteArray JNICALL Java_QJSTunnel_newQJSRuntime
   (JNIEnv *, jobject, jstring, jstring);
+
+/*
+ * Class:     QJSTunnel
+ * Method:    callQJS
+ * Signature: ([B[Ljava/lang/String;)I
+ */
+JNIEXPORT jint JNICALL Java_QJSTunnel_callQJS
+  (JNIEnv *, jobject, jbyteArray, jobjectArray);
 
 /*
  * Class:     QJSTunnel
@@ -41,11 +33,11 @@ JNIEXPORT void JNICALL Java_QJSTunnel_freeQJSRuntime
 
 /*
  * Class:     QJSTunnel
- * Method:    callQJS
- * Signature: ([B[Ljava/lang/String;)I
+ * Method:    exec_cmd
+ * Signature: ([Ljava/lang/String;)I
  */
-JNIEXPORT jint JNICALL Java_QJSTunnel_callQJS
-  (JNIEnv *, jobject, jbyteArray, jobjectArray);
+JNIEXPORT jint JNICALL Java_QJSTunnel_exec_1cmd
+  (JNIEnv *, jobject, jobjectArray);
 
 #ifdef __cplusplus
 }
