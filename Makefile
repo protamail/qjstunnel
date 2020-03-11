@@ -16,7 +16,7 @@ JSRC=*.java
 
 all: $(PROGS)
 
-LIB_OBJS=$(OBJDIR)/QJSConnector.o
+LIB_OBJS=$(OBJDIR)/quickjs-jni.o
 
 LIBS=-lm -ldl libquickjs.lto.a
 

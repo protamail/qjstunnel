@@ -30,7 +30,7 @@ typedef struct QJSHandle {
 } QJSHandle;
 
 /* Init JS runtime and load root module */
-JNIEXPORT jbyteArray JNICALL Java_org_scriptable_QJSTunnel_newQJSRuntime(
+JNIEXPORT jbyteArray JNICALL Java_org_scriptable_QJSConnector_newQJSRuntime(
         JNIEnv *env, jclass cls, jstring filename, jstring mainFunc)
 {
     JSRuntime *rt = JS_NewRuntime();
@@ -90,7 +90,7 @@ release_runtime:
     return (*env)->NewByteArray(env, 0); // return zero-length array to indicate error
 }
 
-JNIEXPORT void JNICALL Java_org_scriptable_QJSTunnel_freeQJSRuntime(
+JNIEXPORT void JNICALL Java_org_scriptable_QJSConnector_freeQJSRuntime(
         JNIEnv *env, jclass cls, jbyteArray jctx)
 {
     if (unlikely(!(*env)->GetArrayLength(env, jctx)))
@@ -158,7 +158,7 @@ static JSValue newJSArray(JSContext *ctx, JNIEnv *env, JavaHandle *javaCtx, jobj
     return ret;
 }
 
-JNIEXPORT jint JNICALL Java_org_scriptable_QJSTunnel_callQJS(
+JNIEXPORT jint JNICALL Java_org_scriptable_QJSConnector_callQJS(
         JNIEnv *env, jobject thisObject, jbyteArray jctx, jobjectArray jarr)
 {
     if (unlikely(!(*env)->GetArrayLength(env, jctx)))
@@ -340,7 +340,7 @@ static int eval_buf(JSContext *ctx, const void *buf, int buf_len,
     return ret;
 }
 
-JNIEXPORT jint JNICALL Java_org_scriptable_QJSTunnel_exec_1cmd(
+JNIEXPORT jint JNICALL Java_org_scriptable_QJSConnector_exec_1cmd(
         JNIEnv *env, jobject this, jobjectArray stringArray)
 {
     int pid, status, ret;

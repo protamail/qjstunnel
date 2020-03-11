@@ -1,8 +1,8 @@
 package org.scriptable;
 
-public class QJCConnector {
+public class QJSConnector {
     static {
-        System.loadLibrary("quickjstun");
+        System.loadLibrary("quickjsc");
     }
 
     public native static synchronized byte[] newQJSRuntime(String filename, String mainFunc);
@@ -26,14 +26,14 @@ public class QJCConnector {
     }
 
     public static void main(String[] args) {
-        QJCConnector t = new QJCConnector();
+        QJSConnector t = new QJSConnector();
 
-        byte[] qjsCtx = QJCConnector.newQJSRuntime("./test.js", "handleRequest");
+        byte[] qjsCtx = QJSConnector.newQJSRuntime("./test.js", "handleRequest");
         if (qjsCtx.length == 0)
             throw new RuntimeException("Failed to initialize QJS runtime");
 //            for (int i = 0; i < 1000000; i++)
             t.callQJS(qjsCtx, "GET", "/test", "param1", "Саша");
-        QJCConnector.freeQJSRuntime(qjsCtx);
+        QJSConnector.freeQJSRuntime(qjsCtx);
     }   
 }
 
