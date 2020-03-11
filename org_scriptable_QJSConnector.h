@@ -26,7 +26,7 @@ JNIEXPORT void JNICALL Java_org_scriptable_QJSConnector_freeQJSRuntime
 /*
  * Class:     org_scriptable_QJSConnector
  * Method:    callQJS
- * Signature: ([B[Ljava/lang/String;)I
+ * Signature: ([B[Ljava/lang/Object;)I
  */
 JNIEXPORT jint JNICALL Java_org_scriptable_QJSConnector_callQJS
   (JNIEnv *, jobject, jbyteArray, jobjectArray);

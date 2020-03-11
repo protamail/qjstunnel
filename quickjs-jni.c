@@ -47,6 +47,7 @@ JNIEXPORT jbyteArray JNICALL Java_org_scriptable_QJSConnector_newQJSRuntime(
     }
 
     fprintf(stderr, "qjs: Creating new QJS runtime...\n");
+    JS_SetCanBlock(rt, 1);
     JS_SetModuleLoaderFunc(rt, NULL, js_module_loader, NULL); // loader for ES6 modules
 
     /* init console.log here rather than call js_std_add_helpers (thread safety concerns) */
@@ -87,6 +88,7 @@ release_runtime:
     if (rt)
         JS_FreeRuntime(rt);
     fprintf(stderr, "qjs: released QJS runtime\n");
+//    fflush(stdout); // stderr not buffered
     return (*env)->NewByteArray(env, 0); // return zero-length array to indicate error
 }
 
@@ -102,6 +104,7 @@ JNIEXPORT void JNICALL Java_org_scriptable_QJSConnector_freeQJSRuntime(
     JS_FreeRuntime(rt);
     (*env)->ReleaseByteArrayElements(env, jctx, (signed char *)qjs, 0);
     fprintf(stderr, "qjs: released QJS runtime\n");
+//    fflush(stdout);
 }
 
 static force_inline JSValue newJSString(JSContext *ctx, JNIEnv *env, jstring jarg)
@@ -167,7 +170,12 @@ JNIEXPORT jint JNICALL Java_org_scriptable_QJSConnector_callQJS(
     JSContext *ctx = qjs->ctx;
     int ret = 0;
     jclass cls = (*env)->GetObjectClass(env, thisObject);
-    jmethodID callJava = (*env)->GetMethodID(env, cls, "callJava", "([Ljava/lang/Object;)[Ljava/lang/Object;");
+    jmethodID callJava = (*env)->GetMethodID(env, cls, "callJava",
+            "([Ljava/lang/Object;)[Ljava/lang/Object;");
+    if (!callJava) {
+        fprintf(stderr, "callQJS: method Object[] callJava(Object[]) undefined\n");
+        return -1;
+    }
     jclass objectClass = (*env)->FindClass(env, "java/lang/Object");
     jmethodID objectToString = (*env)->GetMethodID(env, objectClass, "toString", "()Ljava/lang/String;");
     jclass integerClass = (*env)->FindClass(env, "java/lang/Integer");
@@ -197,10 +205,8 @@ JNIEXPORT jint JNICALL Java_org_scriptable_QJSConnector_callQJS(
     if (unlikely(JS_IsException(result))) {
         ret = -1;
         js_std_dump_error(ctx);
-        goto finalize;
     }
 
-finalize:
     for (int i = 0; i < argc; i++) {
         JS_FreeValue(ctx, argv[i]);
     }
@@ -210,6 +216,7 @@ finalize:
     JS_FreeValue(ctx, result);
     JS_SetContextOpaque(ctx, NULL);
     (*env)->ReleaseByteArrayElements(env, jctx, (signed char *)qjs, 0);
+//    fflush(stdout);
     return ret;
 }
 
@@ -293,7 +300,7 @@ static JSValue js_print(JSContext *ctx, JSValueConst this_val,
         str = JS_ToCString(ctx, argv[i]);
         if (!str)
             return JS_EXCEPTION;
-        fputs(str, stderr); // use stderr because e.g. Tomcat buffers stdout (no catalina.out)
+        fputs(str, stderr);
         JS_FreeCString(ctx, str);
     }
     fputs("\n", stderr);
