@@ -28,7 +28,7 @@ $(CLSDIR):
 
 $(SHLIB): $(OBJDIR) $(LIB_OBJS)
 	$(CC) $(LDFLAGS) -shared -o $@ $(LIB_OBJS) $(LIBS)
-	$(STRIP) $@
+#	$(STRIP) $@
 
 $(JAR): $(CLSDIR) $(JSRC)
 	javac -d $(CLSDIR) -g -h . $(JSRC)

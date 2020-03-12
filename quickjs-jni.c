@@ -46,7 +46,7 @@ JNIEXPORT jbyteArray JNICALL Java_org_scriptable_QJSConnector_newQJSRuntime(
         goto release_runtime;
     }
 
-    fprintf(stderr, "qjs: Creating new QJS runtime...\n");
+    fprintf(stdout, "qjs: Creating new QJS runtime...\n");
     JS_SetCanBlock(rt, 1);
     JS_SetModuleLoaderFunc(rt, NULL, js_module_loader, NULL); // loader for ES6 modules
 
@@ -70,25 +70,23 @@ JNIEXPORT jbyteArray JNICALL Java_org_scriptable_QJSConnector_newQJSRuntime(
     if (unlikely(!JS_IsFunction(ctx, main_func))) {
         fprintf(stderr, "newQJSRuntime: globalThis.%s function undefined\n", _main_func);
         JS_FreeValue(ctx, main_func);
-        goto fail;
+        main_func = JS_UNDEFINED;
     }
     QJSHandle qjsCtx = { ctx, main_func };
     ret = (*env)->NewByteArray(env, sizeof(QJSHandle));
     (*env)->SetByteArrayRegion(env, ret, 0, sizeof(QJSHandle), (jbyte *)&qjsCtx);
 
-fail:
     (*env)->ReleaseStringUTFChars(env, mainFunc, _main_func);
     (*env)->ReleaseStringUTFChars(env, filename, _filename);
     JS_FreeValue(ctx, global_obj);
-    if (likely(ret))
-        return ret;
+    return ret;
 release_runtime:
     if (ctx)
         JS_FreeContext(ctx);
     if (rt)
         JS_FreeRuntime(rt);
-    fprintf(stderr, "qjs: released QJS runtime\n");
-//    fflush(stdout); // stderr not buffered
+    fprintf(stdout, "qjs: released QJS runtime\n");
+    fflush(stdout); // stderr not buffered
     return (*env)->NewByteArray(env, 0); // return zero-length array to indicate error
 }
 
@@ -103,8 +101,8 @@ JNIEXPORT void JNICALL Java_org_scriptable_QJSConnector_freeQJSRuntime(
     JS_FreeContext(qjs->ctx);
     JS_FreeRuntime(rt);
     (*env)->ReleaseByteArrayElements(env, jctx, (signed char *)qjs, 0);
-    fprintf(stderr, "qjs: released QJS runtime\n");
-//    fflush(stdout);
+    fprintf(stdout, "qjs: released QJS runtime\n");
+    fflush(stdout);
 }
 
 static force_inline JSValue newJSString(JSContext *ctx, JNIEnv *env, jstring jarg)
@@ -161,14 +159,8 @@ static JSValue newJSArray(JSContext *ctx, JNIEnv *env, JavaHandle *javaCtx, jobj
     return ret;
 }
 
-JNIEXPORT jint JNICALL Java_org_scriptable_QJSConnector_callQJS(
-        JNIEnv *env, jobject thisObject, jbyteArray jctx, jobjectArray jarr)
+static int get_java_ctx(JNIEnv *env, jobject thisObject, JavaHandle *javaCtx)
 {
-    if (unlikely(!(*env)->GetArrayLength(env, jctx)))
-        return -1;
-    QJSHandle *qjs = (QJSHandle *)(*env)->GetByteArrayElements(env, jctx, NULL);
-    JSContext *ctx = qjs->ctx;
-    int ret = 0;
     jclass cls = (*env)->GetObjectClass(env, thisObject);
     jmethodID callJava = (*env)->GetMethodID(env, cls, "callJava",
             "([Ljava/lang/Object;)[Ljava/lang/Object;");
@@ -176,19 +168,36 @@ JNIEXPORT jint JNICALL Java_org_scriptable_QJSConnector_callQJS(
         fprintf(stderr, "callQJS: method Object[] callJava(Object[]) undefined\n");
         return -1;
     }
-    jclass objectClass = (*env)->FindClass(env, "java/lang/Object");
-    jmethodID objectToString = (*env)->GetMethodID(env, objectClass, "toString", "()Ljava/lang/String;");
-    jclass integerClass = (*env)->FindClass(env, "java/lang/Integer");
-    jmethodID integerConstr = (*env)->GetMethodID(env, integerClass, "<init>", "(I)V");
-    jclass doubleClass = (*env)->FindClass(env, "java/lang/Double");
-    jmethodID doubleConstr = (*env)->GetMethodID(env, doubleClass, "<init>", "(D)V");
-    jclass numberClass = (*env)->FindClass(env, "java/lang/Number");
-    jmethodID numberDoubleValue = (*env)->GetMethodID(env, numberClass, "doubleValue", "()D");
-    jclass stringClass = (*env)->FindClass(env, "java/lang/String");
-    jclass objectArrayClass = (*env)->FindClass(env, "[Ljava/lang/Object;");
-    JavaHandle javaCtx = { env, thisObject, callJava, objectClass, objectToString, integerClass,
-            integerConstr, doubleClass, doubleConstr, numberClass, numberDoubleValue, stringClass,
-            objectArrayClass };
+    javaCtx->env = env;
+    javaCtx->thisObject = thisObject;
+    javaCtx->callJava = callJava;
+    javaCtx->objectClass = (*env)->FindClass(env, "java/lang/Object");
+    javaCtx->objectToString = (*env)->GetMethodID(env, javaCtx->objectClass, "toString",
+            "()Ljava/lang/String;");
+    javaCtx->integerClass = (*env)->FindClass(env, "java/lang/Integer");
+    javaCtx->integerConstr = (*env)->GetMethodID(env, javaCtx->integerClass, "<init>", "(I)V");
+    javaCtx->doubleClass = (*env)->FindClass(env, "java/lang/Double");
+    javaCtx->doubleConstr = (*env)->GetMethodID(env, javaCtx->doubleClass, "<init>", "(D)V");
+    javaCtx->numberClass = (*env)->FindClass(env, "java/lang/Number");
+    javaCtx->numberDoubleValue = (*env)->GetMethodID(env, javaCtx->numberClass, "doubleValue", "()D");
+    javaCtx->stringClass = (*env)->FindClass(env, "java/lang/String");
+    javaCtx->objectArrayClass = (*env)->FindClass(env, "[Ljava/lang/Object;");
+    return 0;
+}
+
+JNIEXPORT jint JNICALL Java_org_scriptable_QJSConnector_callQJS(
+        JNIEnv *env, jobject thisObject, jbyteArray jctx, jobjectArray jarr)
+{
+    if (unlikely(!(*env)->GetArrayLength(env, jctx)))
+        return -1;
+    QJSHandle *qjs = (QJSHandle *)(*env)->GetByteArrayElements(env, jctx, NULL);
+    if (!qjs || JS_IsUndefined(qjs->main_func))
+        return -1;
+    JSContext *ctx = qjs->ctx;
+    int ret = 0;
+    JavaHandle javaCtx;
+    if (get_java_ctx(env, thisObject, &javaCtx) < 0)
+        return -1;
 
     JS_SetContextOpaque(ctx, &javaCtx);
     JSValue global_obj = JS_GetGlobalObject(ctx);
@@ -202,10 +211,8 @@ JNIEXPORT jint JNICALL Java_org_scriptable_QJSConnector_callQJS(
     for (int i = 0; i < argc; i++)
         argv[i] = JS_GetPropertyUint32(ctx, jsa, i);
     JSValue result = JS_Call(ctx, qjs->main_func, global_obj, argc, argv);
-    if (unlikely(JS_IsException(result))) {
+    if (unlikely(JS_IsException(result)))
         ret = -1;
-        js_std_dump_error(ctx);
-    }
 
     for (int i = 0; i < argc; i++) {
         JS_FreeValue(ctx, argv[i]);
@@ -216,7 +223,7 @@ JNIEXPORT jint JNICALL Java_org_scriptable_QJSConnector_callQJS(
     JS_FreeValue(ctx, result);
     JS_SetContextOpaque(ctx, NULL);
     (*env)->ReleaseByteArrayElements(env, jctx, (signed char *)qjs, 0);
-//    fflush(stdout);
+    fflush(stdout);
     return ret;
 }
 
@@ -255,7 +262,8 @@ static jobjectArray newJavaObjectArray(JSContext *ctx, JNIEnv *env, JavaHandle *
                 case JS_TAG_INT:
                 case JS_TAG_BOOL:
                     (*env)->SetObjectArrayElement(env, ret, i,
-                        (*env)->NewObjectA(env, javaCtx->integerClass, javaCtx->integerConstr, (jvalue *)&JS_VALUE_GET_INT(val)));
+                        (*env)->NewObjectA(env, javaCtx->integerClass, javaCtx->integerConstr,
+                            (jvalue *)&JS_VALUE_GET_INT(val)));
                     break;
                 case JS_TAG_NULL:
                 case JS_TAG_UNDEFINED:
@@ -263,7 +271,8 @@ static jobjectArray newJavaObjectArray(JSContext *ctx, JNIEnv *env, JavaHandle *
                     break;
                 case JS_TAG_FLOAT64:
                     (*env)->SetObjectArrayElement(env, ret, i,
-                        (*env)->NewObjectA(env, javaCtx->doubleClass, javaCtx->doubleConstr, (jvalue *)&JS_VALUE_GET_FLOAT64(val)));
+                        (*env)->NewObjectA(env, javaCtx->doubleClass, javaCtx->doubleConstr,
+                            (jvalue *)&JS_VALUE_GET_FLOAT64(val)));
                     break;
                 default:
                     str = JS_ToCString(ctx, val);
@@ -277,10 +286,42 @@ static jobjectArray newJavaObjectArray(JSContext *ctx, JNIEnv *env, JavaHandle *
     return ret;
 }
 
+JNIEXPORT jobjectArray JNICALL Java_org_scriptable_QJSConnector_getQJSException(
+        JNIEnv *env, jobject thisObject, jbyteArray jctx) {
+    if (unlikely(!(*env)->GetArrayLength(env, jctx)))
+        return NULL;
+    QJSHandle *qjs = (QJSHandle *)(*env)->GetByteArrayElements(env, jctx, NULL);
+    JSContext *ctx = qjs->ctx;
+    JavaHandle javaCtx;
+    if (get_java_ctx(env, thisObject, &javaCtx) < 0)
+        return NULL;
+    JSValue exception_val = JS_GetException(ctx);
+    jobjectArray jarr = NULL;
+    int depth = 0;
+    if (!JS_IsNull(exception_val) && !JS_IsUndefined(exception_val)) {
+        JSValue stack = JS_UNDEFINED;
+//        if (JS_IsError(ctx, exception_val))
+            stack = JS_GetPropertyStr(ctx, exception_val, "stack");
+        if (!JS_IsNull(stack) && !JS_IsUndefined(stack)) {
+            JSValue msgs[] = { exception_val, stack };
+            jarr = newJavaObjectArray(ctx, env, &javaCtx, 2, msgs, &depth);
+        } else
+            jarr = newJavaObjectArray(ctx, env, &javaCtx, 1, &exception_val, &depth);
+        JS_FreeValue(ctx, stack);
+    }
+    JS_FreeValue(ctx, exception_val);
+    (*env)->ReleaseByteArrayElements(env, jctx, (signed char *)qjs, 0);
+    return jarr;
+}
+
 static JSValue js_call_java(JSContext *ctx, JSValueConst this_val,
                         int argc, JSValueConst *argv)
 {
     JavaHandle *javaCtx = (JavaHandle *)JS_GetContextOpaque(ctx);
+    if (javaCtx == NULL) {
+        fprintf(stderr, "js_call_java: JS_GetContextOpaque is NULL");
+        return JS_UNDEFINED;
+    }
     JNIEnv *env = javaCtx->env;
     int depth = 0;
     jobjectArray jarr = newJavaObjectArray(ctx, env, javaCtx, argc, argv, &depth);
@@ -296,14 +337,14 @@ static JSValue js_print(JSContext *ctx, JSValueConst this_val,
 
     for(i = 0; i < argc; i++) {
         if (i != 0)
-            fputs(" ", stderr);
+            fputs(" ", stdout);
         str = JS_ToCString(ctx, argv[i]);
         if (!str)
             return JS_EXCEPTION;
-        fputs(str, stderr);
+        fputs(str, stdout);
         JS_FreeCString(ctx, str);
     }
-    fputs("\n", stderr);
+    fputs("\n", stdout);
     return JS_UNDEFINED;
 }
 
@@ -341,7 +382,6 @@ static int eval_buf(JSContext *ctx, const void *buf, int buf_len,
     }
     if (JS_IsException(val)) {
         ret = -1;
-        js_std_dump_error(ctx);
     }
     JS_FreeValue(ctx, val);
     return ret;

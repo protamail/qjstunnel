@@ -12,6 +12,7 @@ public class QJSConnector {
     native static byte[] newQJSRuntime(String filename, String mainFunc);
     native static void freeQJSRuntime(byte[] ctx);
     native int callQJS(byte[] ctx, Object[] argv);
+    native Object[] getQJSException(byte[] ctx);
     native int exec_cmd(String[] cmd);
 
     public QJSConnector(String filename, String mainFunc) {
@@ -26,29 +27,35 @@ public class QJSConnector {
 
     // QJS runtime must be used by the thread which created it
     static ThreadLocal<QJSRuntime> perThread = new ThreadLocal<QJSRuntime>();
-    public static final class QJSRuntime {
+    static final class QJSRuntime {
         protected byte[] ctx;
 
         private QJSRuntime(byte[] ctx) {
             this.ctx = ctx;
         }
 
-        public static QJSRuntime getInstance(String filename, String mainFunc) {
-            QJSRuntime ret = perThread.get();
-            if (ret == null) synchronized(QJSRuntime.class) {
-                ret = new QJSRuntime(newQJSRuntime(filename, mainFunc));
-                if (ret.ctx.length == 0)
-                    throw new RuntimeException("QJSRuntime: failed to create QJS instance!");
-                perThread.set(ret);
+        public static QJSRuntime getInstance(QJSConnector c) {
+            QJSRuntime rt = perThread.get();
+            if (rt == null) synchronized(QJSRuntime.class) {
+                rt = new QJSRuntime(newQJSRuntime(c.filename, c.mainFunc));
+                if (rt.ctx.length == 0)
+                    throw new RuntimeException("QJSConnector: failed to create quickjs runtime!");
+                perThread.set(rt);
+                String compileError = c.getErrorStackTrace(rt);
+                if (compileError != null) {
+                    System.err.println("Error while loading " + c.filename);
+                    release();
+                    throw new RuntimeException(compileError);
+                }
             }
-            return ret;
+            return rt;
         }
 
         public synchronized static void release() {
-            QJSRuntime ret = perThread.get();
-            if (ret != null) {
+            QJSRuntime rt = perThread.get();
+            if (rt != null) {
                 perThread.remove();
-                freeQJSRuntime(ret.ctx);
+                freeQJSRuntime(rt.ctx);
             }
         }
 
@@ -59,19 +66,40 @@ public class QJSConnector {
         }
     }
 
-    public int callQJS(Object... argv) {
-        QJSRuntime rt = QJSRuntime.getInstance(filename, mainFunc);
+    public String getErrorStackTrace(QJSRuntime rt) {
+        String error = null;
+        Object[] st = getQJSException(rt.ctx);
+        if (st != null && st.length > 0) {
+            StringBuilder sb = new StringBuilder();
+            for (int i = 0; i < st.length; i++) {
+                sb.append(st[i] == null? "NULL" : st[i].toString());
+                sb.append("\n");
+            }
+            error = sb.toString();
+        }
+        return error;
+    }
+
+    /* return null if OK, or error stack trace otherwise */
+    public String callQJS(Object... argv) {
+        QJSRuntime rt = QJSRuntime.getInstance(this);
         int ret = callQJS(rt.ctx, argv);
-        if (ret == -1 /* some sort of critical error */)
+        String error = null;
+        if (ret < 0) {
+            error = getErrorStackTrace(rt);
             QJSRuntime.release();
-        return ret;
+        }
+        return error;
     }
 
     public static void main(String[] args) {
         QJSConnector c = new QJSConnector("./test.js", "handleRequest");
 
-    for (int i = 0; i < 5; i++)
-        c.callQJS("GET", "/test", "param1", "Саша");
+        for (int i = 0; i < 1000000; i++) {
+            String r = c.callQJS("GET", "/test", "param1", "Саша");
+            if (r != null)
+                System.err.print(r);
+        }
         QJSRuntime.release();
     }
 }

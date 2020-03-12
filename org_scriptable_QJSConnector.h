@@ -33,6 +33,14 @@ JNIEXPORT jint JNICALL Java_org_scriptable_QJSConnector_callQJS
 
 /*
  * Class:     org_scriptable_QJSConnector
+ * Method:    getQJSException
+ * Signature: ([B)[Ljava/lang/Object;
+ */
+JNIEXPORT jobjectArray JNICALL Java_org_scriptable_QJSConnector_getQJSException
+  (JNIEnv *, jobject, jbyteArray);
+
+/*
+ * Class:     org_scriptable_QJSConnector
  * Method:    exec_cmd
  * Signature: ([Ljava/lang/String;)I
  */
