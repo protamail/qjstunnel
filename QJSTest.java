@@ -24,7 +24,7 @@ public class QJSTest extends QJSTunnel {
             t.qjsCtx = t.newQJSRuntime("./test.js", "handleRequest");
             if (t.qjsCtx.length == 0)
                 throw new RuntimeException("Failed to initialize QJS runtime");
-//            for (int i = 0; i < 1000000; i++)
+            for (int i = 0; i < 1000000; i++)
 //            for (;;)
                 t.callQJS(t.qjsCtx, "GET", "/test", "param1", "Саша");
             t.freeQJSRuntime(t.qjsCtx);
