@@ -5,8 +5,10 @@ import * as b from "test-bundle.js";
 globalThis.std = std;
 globalThis.os = os;
 
+//    throw "Error(null);"
 globalThis.handleRequest = function(method, path, ...searchNameValue) {
     let a = callJava("eee","q","Саша", 3, 3.1415, "heh", "r",2.3, true, false);
+//    throw Error("ss");
     for (let s of a)
         console.log(s);
 }
