@@ -42,3 +42,4 @@ clean:
 
 test: all
 	java -cp $(JAR) -Djava.library.path=. org.scriptable.QJSConnector
+	#java -Xmx200m -cp $(JAR) -Djava.library.path=. org.scriptable.QJSConnector

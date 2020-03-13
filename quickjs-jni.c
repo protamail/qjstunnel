@@ -159,7 +159,7 @@ static JSValue newJSArray(JSContext *ctx, JNIEnv *env, JavaHandle *javaCtx, jobj
     return ret;
 }
 
-static int get_java_ctx(JNIEnv *env, jobject thisObject, JavaHandle *javaCtx)
+static int init_java_ctx(JNIEnv *env, jobject thisObject, JavaHandle *javaCtx)
 {
     jclass cls = (*env)->GetObjectClass(env, thisObject);
     jmethodID callJava = (*env)->GetMethodID(env, cls, "callJava",
@@ -196,7 +196,7 @@ JNIEXPORT jint JNICALL Java_org_scriptable_QJSConnector_callQJS(
     JSContext *ctx = qjs->ctx;
     int ret = 0;
     JavaHandle javaCtx;
-    if (get_java_ctx(env, thisObject, &javaCtx) < 0)
+    if (init_java_ctx(env, thisObject, &javaCtx) < 0)
         return -1;
 
     JS_SetContextOpaque(ctx, &javaCtx);
@@ -293,15 +293,13 @@ JNIEXPORT jobjectArray JNICALL Java_org_scriptable_QJSConnector_getQJSException(
     QJSHandle *qjs = (QJSHandle *)(*env)->GetByteArrayElements(env, jctx, NULL);
     JSContext *ctx = qjs->ctx;
     JavaHandle javaCtx;
-    if (get_java_ctx(env, thisObject, &javaCtx) < 0)
+    if (init_java_ctx(env, thisObject, &javaCtx) < 0)
         return NULL;
     JSValue exception_val = JS_GetException(ctx);
     jobjectArray jarr = NULL;
     int depth = 0;
     if (!JS_IsNull(exception_val) && !JS_IsUndefined(exception_val)) {
-        JSValue stack = JS_UNDEFINED;
-//        if (JS_IsError(ctx, exception_val))
-            stack = JS_GetPropertyStr(ctx, exception_val, "stack");
+        JSValue stack = JS_GetPropertyStr(ctx, exception_val, "stack");
         if (!JS_IsNull(stack) && !JS_IsUndefined(stack)) {
             JSValue msgs[] = { exception_val, stack };
             jarr = newJavaObjectArray(ctx, env, &javaCtx, 2, msgs, &depth);

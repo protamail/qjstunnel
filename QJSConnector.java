@@ -51,17 +51,19 @@ public class QJSConnector {
             return rt;
         }
 
-        public synchronized static void release() {
+        public static void release() {
             QJSRuntime rt = perThread.get();
-            if (rt != null) {
+            if (rt != null) synchronized(QJSRuntime.class) {
                 perThread.remove();
                 freeQJSRuntime(rt.ctx);
+                rt.ctx = null;
             }
         }
 
         @Override protected void finalize() {
             synchronized(QJSRuntime.class) {
-                freeQJSRuntime(ctx);
+                if (ctx != null)
+                    freeQJSRuntime(ctx);
             }
         }
     }
