@@ -18,7 +18,7 @@ all: $(PROGS)
 
 LIB_OBJS=$(OBJDIR)/quickjs-jni.o
 
-LIBS=-lm -ldl libquickjs.lto.a
+LIBS=-lm -ldl -lrt libquickjs.lto.a
 
 $(OBJDIR):
 	mkdir -p $(OBJDIR)
@@ -41,5 +41,6 @@ clean:
 	rm -rf $(OBJDIR)/ $(PROGS)
 
 test: all
-	java -cp $(JAR) -Djava.library.path=. org.scriptable.QJSConnector
-	#java -Xmx200m -cp $(JAR) -Djava.library.path=. org.scriptable.QJSConnector
+	java -cp $(JAR) -Djava.library.path=. org.scriptable.QuickJSConnector
+
+

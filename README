@@ -1,0 +1,8 @@
+# INSTALL for Tomcat
+
+    - do `make`
+    - copy libquickjsc.so and libquickjsc.jar to tomcat's lib directory and restart.
+
+NOTE: At least as of java1.8/tomcat8/redhat6, do not overwrite libquickjsc.so in tomcat's lib
+without subsequent restart since this will result in a coredump.
+

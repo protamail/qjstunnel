@@ -5,6 +5,8 @@
 #include <malloc.h>
 #include "quickjs-libc.h"
 #include <string.h>
+#include <pthread.h>
+#include <errno.h>
 
 #if defined(__GNUC__) || defined(__clang__)
 #define likely(x)          __builtin_expect(!!(x), 1)
@@ -29,35 +31,55 @@ typedef struct QJSHandle {
     JSValue main_func;
 } QJSHandle;
 
+static pthread_mutex_t js_atomics_mutex = PTHREAD_MUTEX_INITIALIZER;
+static int js_instance_count = 0;
+static int inc_instance_count()
+{
+    pthread_mutex_lock(&js_atomics_mutex);
+    int ret = ++js_instance_count;
+    if (!(ret&7))
+        fprintf(stdout, "quickjs: runtime alloc count %d\n", ret);
+    pthread_mutex_unlock(&js_atomics_mutex);
+    return ret;
+}
+
+static int dec_instance_count()
+{
+    pthread_mutex_lock(&js_atomics_mutex);
+    int ret = --js_instance_count;
+    fprintf(stdout, "quickjs: runtime alloc count %d\n", ret);
+    pthread_mutex_unlock(&js_atomics_mutex);
+    return ret;
+}
+
 /* Init JS runtime and load root module */
-JNIEXPORT jbyteArray JNICALL Java_org_scriptable_QJSConnector_newQJSRuntime(
+JNIEXPORT jbyteArray JNICALL Java_org_scriptable_QuickJSConnector_nativeNewQJSRuntime(
         JNIEnv *env, jclass cls, jstring filename, jstring mainFunc)
 {
     JSRuntime *rt = JS_NewRuntime();
     JSContext *ctx = NULL;
     jbyteArray ret = NULL;
     if (unlikely(!rt)) {
-        fprintf(stderr, "Error: cannot allocate JS runtime\n");
+        fprintf(stdout, "Error: cannot allocate JS runtime\n");
         goto release_runtime;
     }
     ctx = JS_NewContext(rt); // includes intrinsic objects init
     if (unlikely(!ctx)) {
-        fprintf(stderr, "Error: cannot allocate JS context\n");
+        fprintf(stdout, "Error: cannot allocate JS context\n");
         goto release_runtime;
     }
 
-    fprintf(stdout, "qjs: Creating new QJS runtime...\n");
     JS_SetCanBlock(rt, 1);
     JS_SetModuleLoaderFunc(rt, NULL, js_module_loader, NULL); // loader for ES6 modules
 
     /* init console.log here rather than call js_std_add_helpers (thread safety concerns) */
     JSValue global_obj = JS_GetGlobalObject(ctx);
     JSValue console = JS_NewObject(ctx);
-    JS_SetPropertyStr(ctx, console, "log",
-                      JS_NewCFunction(ctx, js_print, "log", 1));
-    JS_SetPropertyStr(ctx, global_obj, "console", console);
-    JS_SetPropertyStr(ctx, global_obj, "callJava",
-                      JS_NewCFunction(ctx, js_call_java, "callJava", 1/* at least one param */));
+    JS_DefinePropertyValueStr(ctx, console, "log",
+                      JS_NewCFunction(ctx, js_print, "log", 1), 0);
+    JS_DefinePropertyValueStr(ctx, global_obj, "console", console, 0);
+    JS_DefinePropertyValueStr(ctx, global_obj, "callJava",
+                      JS_NewCFunction(ctx, js_call_java, "callJava", 1/* at least one param */), 0);
 
     /* system modules */
     js_init_module_std(ctx, "std");
@@ -65,13 +87,10 @@ JNIEXPORT jbyteArray JNICALL Java_org_scriptable_QJSConnector_newQJSRuntime(
 
     const char *_filename = (*env)->GetStringUTFChars(env, filename, NULL);
     const char *_main_func = (*env)->GetStringUTFChars(env, mainFunc, NULL);
-    eval_module(ctx, _filename);
-    JSValue main_func = JS_GetPropertyStr(ctx, global_obj, _main_func);
-    if (unlikely(!JS_IsFunction(ctx, main_func))) {
-        fprintf(stderr, "newQJSRuntime: globalThis.%s function undefined\n", _main_func);
-        JS_FreeValue(ctx, main_func);
-        main_func = JS_UNDEFINED;
-    }
+    int eret = eval_module(ctx, _filename);
+    JSValue main_func = eret < 0? JS_UNDEFINED : JS_GetPropertyStr(ctx, global_obj, _main_func);
+    if (!eret && !JS_IsFunction(ctx, main_func))
+        JS_ThrowInternalError(ctx, "globalThis.%s function undefined", _main_func);
     QJSHandle qjsCtx = { ctx, main_func };
     ret = (*env)->NewByteArray(env, sizeof(QJSHandle));
     (*env)->SetByteArrayRegion(env, ret, 0, sizeof(QJSHandle), (jbyte *)&qjsCtx);
@@ -79,18 +98,18 @@ JNIEXPORT jbyteArray JNICALL Java_org_scriptable_QJSConnector_newQJSRuntime(
     (*env)->ReleaseStringUTFChars(env, mainFunc, _main_func);
     (*env)->ReleaseStringUTFChars(env, filename, _filename);
     JS_FreeValue(ctx, global_obj);
+    inc_instance_count();
+    fflush(stdout); // stdout not buffered
     return ret;
 release_runtime:
     if (ctx)
         JS_FreeContext(ctx);
     if (rt)
         JS_FreeRuntime(rt);
-    fprintf(stdout, "qjs: released QJS runtime\n");
-    fflush(stdout); // stderr not buffered
     return (*env)->NewByteArray(env, 0); // return zero-length array to indicate error
 }
 
-JNIEXPORT void JNICALL Java_org_scriptable_QJSConnector_freeQJSRuntime(
+JNIEXPORT void JNICALL Java_org_scriptable_QuickJSConnector_nativeFreeQJSRuntime(
         JNIEnv *env, jclass cls, jbyteArray jctx)
 {
     if (unlikely(!(*env)->GetArrayLength(env, jctx)))
@@ -101,7 +120,7 @@ JNIEXPORT void JNICALL Java_org_scriptable_QJSConnector_freeQJSRuntime(
     JS_FreeContext(qjs->ctx);
     JS_FreeRuntime(rt);
     (*env)->ReleaseByteArrayElements(env, jctx, (signed char *)qjs, 0);
-    fprintf(stdout, "qjs: released QJS runtime\n");
+    dec_instance_count();
     fflush(stdout);
 }
 
@@ -144,7 +163,7 @@ static JSValue newJSArray(JSContext *ctx, JNIEnv *env, JavaHandle *javaCtx, jobj
         }
         else if ((*env)->IsInstanceOf(env, jobj, javaCtx->objectArrayClass)) {
             if (unlikely(*depth > 100))
-                fprintf(stderr, "newJSArray: too many nested arrays, circular ref?\n");
+                fprintf(stdout, "newJSArray: too many nested arrays, circular ref?\n");
             else {
                 ++*depth;
                 JS_SetPropertyUint32(ctx, ret, i, newJSArray(ctx, env, javaCtx, (jobjectArray)jobj, depth));
@@ -165,7 +184,7 @@ static int init_java_ctx(JNIEnv *env, jobject thisObject, JavaHandle *javaCtx)
     jmethodID callJava = (*env)->GetMethodID(env, cls, "callJava",
             "([Ljava/lang/Object;)[Ljava/lang/Object;");
     if (!callJava) {
-        fprintf(stderr, "callQJS: method Object[] callJava(Object[]) undefined\n");
+        fprintf(stdout, "callQJS: method Object[] callJava(Object[]) undefined\n");
         return -1;
     }
     javaCtx->env = env;
@@ -185,13 +204,13 @@ static int init_java_ctx(JNIEnv *env, jobject thisObject, JavaHandle *javaCtx)
     return 0;
 }
 
-JNIEXPORT jint JNICALL Java_org_scriptable_QJSConnector_callQJS(
+JNIEXPORT jint JNICALL Java_org_scriptable_QuickJSConnector_nativeCallQJS(
         JNIEnv *env, jobject thisObject, jbyteArray jctx, jobjectArray jarr)
 {
     if (unlikely(!(*env)->GetArrayLength(env, jctx)))
         return -1;
     QJSHandle *qjs = (QJSHandle *)(*env)->GetByteArrayElements(env, jctx, NULL);
-    if (!qjs || JS_IsUndefined(qjs->main_func))
+    if (!qjs)
         return -1;
     JSContext *ctx = qjs->ctx;
     int ret = 0;
@@ -213,6 +232,8 @@ JNIEXPORT jint JNICALL Java_org_scriptable_QJSConnector_callQJS(
     JSValue result = JS_Call(ctx, qjs->main_func, global_obj, argc, argv);
     if (unlikely(JS_IsException(result)))
         ret = -1;
+    if (JS_VALUE_GET_TAG(result) == JS_TAG_INT)
+        ret = JS_VALUE_GET_INT(result);
 
     for (int i = 0; i < argc; i++) {
         JS_FreeValue(ctx, argv[i]);
@@ -244,7 +265,7 @@ static jobjectArray newJavaObjectArray(JSContext *ctx, JNIEnv *env, JavaHandle *
             for (int j = 0; j < len; j++)
                 jsa[j] = JS_GetPropertyUint32(ctx, val, j);
             if (unlikely(*depth > 100))
-                fprintf(stderr, "newJavaObjectArray: too many nested arrays, circular ref?\n");
+                fprintf(stdout, "newJavaObjectArray: too many nested arrays, circular ref?\n");
             else {
                 ++*depth;
                 (*env)->SetObjectArrayElement(env, ret, i,
@@ -286,7 +307,7 @@ static jobjectArray newJavaObjectArray(JSContext *ctx, JNIEnv *env, JavaHandle *
     return ret;
 }
 
-JNIEXPORT jobjectArray JNICALL Java_org_scriptable_QJSConnector_getQJSException(
+JNIEXPORT jobjectArray JNICALL Java_org_scriptable_QuickJSConnector_nativeGetQJSException(
         JNIEnv *env, jobject thisObject, jbyteArray jctx) {
     if (unlikely(!(*env)->GetArrayLength(env, jctx)))
         return NULL;
@@ -317,14 +338,31 @@ static JSValue js_call_java(JSContext *ctx, JSValueConst this_val,
 {
     JavaHandle *javaCtx = (JavaHandle *)JS_GetContextOpaque(ctx);
     if (javaCtx == NULL) {
-        fprintf(stderr, "js_call_java: JS_GetContextOpaque is NULL");
+        fprintf(stdout, "js_call_java: JS_GetContextOpaque is NULL");
         return JS_UNDEFINED;
     }
     JNIEnv *env = javaCtx->env;
     int depth = 0;
     jobjectArray jarr = newJavaObjectArray(ctx, env, javaCtx, argc, argv, &depth);
     jarr = (jobjectArray)(*env)->CallObjectMethod(env, javaCtx->thisObject, javaCtx->callJava, jarr);
-    return newJSArray(ctx, env, javaCtx, jarr, &depth);
+    JSValue ret = newJSArray(ctx, env, javaCtx, jarr, &depth);
+    if (jarr && (*env)->GetArrayLength(env, jarr) == 2) { // did we get an exception back?
+        JSValue val = JS_GetPropertyUint32(ctx, ret, 0);
+        const char *str = JS_ToCString(ctx, val);
+        if (unlikely(!str))
+            str = "";
+        if (!strcmp(str, "__error__")) {
+            JSValue error = JS_GetPropertyUint32(ctx, ret, 1);
+            const char *cerror = JS_ToCString(ctx, error);
+            JS_FreeValue(ctx, ret);
+            ret = JS_ThrowInternalError(ctx, cerror);
+            JS_FreeCString(ctx, cerror);
+            JS_FreeValue(ctx, error);
+        }
+        JS_FreeCString(ctx, str);
+        JS_FreeValue(ctx, val);
+    }
+    return ret;
 }
 
 static JSValue js_print(JSContext *ctx, JSValueConst this_val,
@@ -351,8 +389,9 @@ static int eval_module(JSContext *ctx, const char *filename)
     size_t buf_len;
     uint8_t *buf = js_load_file(ctx, &buf_len, filename);
     if (!buf) {
-        perror(filename);
-        exit(1);
+        JS_ThrowInternalError(ctx, strerror(errno));
+        //perror(filename);
+        return -1;
     }
 
     int ret = eval_buf(ctx, buf, buf_len, filename, JS_EVAL_TYPE_MODULE); // vs JS_EVAL_TYPE_GLOBAL
@@ -383,40 +422,6 @@ static int eval_buf(JSContext *ctx, const void *buf, int buf_len,
     }
     JS_FreeValue(ctx, val);
     return ret;
-}
-
-JNIEXPORT jint JNICALL Java_org_scriptable_QJSConnector_exec_1cmd(
-        JNIEnv *env, jobject this, jobjectArray stringArray)
-{
-    int pid, status, ret;
-    char **argv = malloc(sizeof(char *)), *arg0;
-    jstring name;
-
-    int len = (*env)->GetArrayLength(env, stringArray);
-
-    if (len < 1)
-        return -1;
-
-    name = (*env)->GetObjectArrayElement(env, stringArray, 0);
-    arg0 = (char *)(*env)->GetStringUTFChars(env, name, NULL);
-    argv[0] = arg0;
-    argv[1] = 0;
-
-    pid = fork();
-    if (pid == 0) {
-        execvp(argv[0], argv);
-        exit(1);
-    } 
-
-    for(;;) {
-        ret = waitpid(pid, &status, 0);
-        if (ret == pid && WIFEXITED(status))
-            break;
-    }
-
-    (*env)->ReleaseStringUTFChars(env, name, arg0); // don't leak
-    free(argv);
-    return WEXITSTATUS(status);
 }
 
 
